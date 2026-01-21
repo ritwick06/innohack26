@@ -1,0 +1,1253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Water Robot Monitor - Advanced</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw-src.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <style>
+        .robot-marker {
+            background: transparent;
+            border: none;
+        }
+        .robot-icon {
+            font-size: 28px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        .coverage-cell {
+            stroke: #10B981;
+            stroke-width: 1;
+            fill: #10B981;
+            fill-opacity: 0.3;
+        }
+        .leaflet-div-icon {
+            background: transparent;
+            border: none;
+        }
+        .drawing-active {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-cyan-50 min-h-screen">
+    <div class="max-w-7xl mx-auto p-4">
+        <!-- Header Section -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800 flex items-center gap-2">
+                        <svg class="text-blue-500" width="32" height="32" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+                        </svg>
+                        Advanced Water Surface Cleaning Robot
+                    </h1>
+                    <p class="text-gray-600 mt-1">Autonomous USV with Boustrophedon Path Planning</p>
+                </div>
+                <div class="flex gap-3">
+                    <button id="connectBtn" class="flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all bg-blue-500 hover:bg-blue-600 text-white">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" class="mr-2">
+                            <path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/>
+                        </svg>
+                        Connect to MQTT
+                    </button>
+                </div>
+            </div>
+            
+            <div id="mqttConfig" class="mt-4 p-4 bg-gray-50 rounded-lg">
+                <h3 class="font-semibold text-gray-700 mb-3">MQTT Configuration</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <input type="text" id="brokerUrl" placeholder="Broker URL" 
+                           class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           value="ws://broker.hivemq.com:8000/mqtt">
+                    <input type="text" id="topicPrefix" placeholder="Topic Prefix" 
+                           class="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                           value="robot/water">
+                </div>
+                <p class="text-sm text-gray-500 mt-2">Status: <span id="connectionStatus" class="font-semibold text-red-600">Disconnected</span></p>
+            </div>
+        </div>
+
+        <!-- Map Section -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-700">Operational Area & Path Planning</h3>
+                <div class="flex gap-2">
+                    <button id="drawAreaBtn" class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium text-sm transition-all">
+                        Draw Operation Area
+                    </button>
+                    <button id="clearMapBtn" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium text-sm transition-all">
+                        Clear Map
+                    </button>
+                    <button id="followRobotBtn" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg font-medium text-sm transition-all">
+                        📍 Follow Robot
+                    </button>
+                    <button id="startMissionBtn" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-all">
+                        Start Mission
+                    </button>
+                    <button id="stopMissionBtn" class="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium text-sm transition-all">
+                        Stop Mission
+                    </button>
+                </div>
+            </div>
+            <div id="map" class="h-96 rounded-lg border border-gray-300"></div>
+            <div class="mt-4 grid grid-cols-4 gap-4">
+                <div class="bg-gray-50 p-3 rounded-lg">
+                    <p class="text-sm text-gray-600">Coverage Progress</p>
+                    <p id="coveragePercent" class="text-2xl font-bold text-blue-600">0%</p>
+                </div>
+                <div class="bg-gray-50 p-3 rounded-lg">
+                    <p class="text-sm text-gray-600">Cells Covered</p>
+                    <p id="cellsCovered" class="text-2xl font-bold text-green-600">0/0</p>
+                </div>
+                <div class="bg-gray-50 p-3 rounded-lg">
+                    <p class="text-sm text-gray-600">Estimated Time</p>
+                    <p id="estimatedTime" class="text-2xl font-bold text-purple-600">0 min</p>
+                </div>
+                <div class="bg-gray-50 p-3 rounded-lg">
+                    <p class="text-sm text-gray-600">Area Size</p>
+                    <p id="areaSize" class="text-2xl font-bold text-orange-600">0 m²</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard Panels -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+            <!-- Battery Status -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-700">Battery Status</h3>
+                    <svg id="batteryIcon" class="text-green-500" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+                        <rect x="1" y="6" width="18" height="12" rx="2" ry="2"/><path d="M23 10v4"/>
+                    </svg>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <span id="batteryLevel" class="text-2xl font-bold text-gray-800">0%</span>
+                            <span id="solarStatus" class="text-sm text-green-600 font-medium hidden">⚡ Solar Charging</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3">
+                            <div id="batteryBar" class="h-3 rounded-full transition-all bg-green-500" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-600">
+                        <div>Temperature: <span id="tempValue">0</span>°C</div>
+                        <div>Voltage: <span id="voltageValue">0</span>V</div>
+                        <div>Charge Current: <span id="chargeCurrent">0</span>A</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GPS Location -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-700">GPS Location</h3>
+                    <svg class="text-blue-500" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+                        <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+                    </svg>
+                </div>
+                <div class="space-y-2">
+                    <div>
+                        <span class="text-sm text-gray-600">Latitude:</span>
+                        <p id="latitude" class="text-lg font-mono font-semibold text-gray-800">0.000000</p>
+                    </div>
+                    <div>
+                        <span class="text-sm text-gray-600">Longitude:</span>
+                        <p id="longitude" class="text-lg font-mono font-semibold text-gray-800">0.000000</p>
+                    </div>
+                    <div>
+                        <span class="text-sm text-gray-600">Altitude:</span>
+                        <p id="altitude" class="text-sm font-mono text-gray-700">0 m</p>
+                    </div>
+                    <div>
+                        <span class="text-sm text-gray-600">Heading:</span>
+                        <p id="heading" class="text-sm font-mono text-gray-700">0°</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Robot Status -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-700">Robot Status</h3>
+                    <svg id="statusIcon" class="text-gray-500" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                    </svg>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <span class="text-sm text-gray-600">Mode:</span>
+                        <p id="robotStatus" class="text-2xl font-bold text-gray-500">IDLE</p>
+                    </div>
+                    <div class="text-sm text-gray-600">
+                        <div>LIDAR: <span id="lidarValue">0</span>m</div>
+                        <div>Speed: <span id="speedValue">0</span>m/s</div>
+                        <div>Motor Temp: <span id="motorTemp">0</span>°C</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mission Progress -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-gray-700">Mission Progress</h3>
+                    <svg class="text-purple-500" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+                        <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                    </svg>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <span class="text-sm text-gray-600">Area Covered</span>
+                            <span id="areaCovered" class="text-sm font-semibold text-gray-800">0 m²</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div id="areaBar" class="bg-purple-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <span class="text-sm text-gray-600">Trash Collected</span>
+                            <span id="trashCollected" class="text-sm font-semibold text-gray-800">0 kg</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div id="trashBar" class="bg-green-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-600">
+                        <div>Mission Time: <span id="missionTime">00:00</span></div>
+                        <div>Energy Used: <span id="energyUsed">0</span> Wh</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sensor Readings -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4">Sensor Readings</h3>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Water Temp:</span>
+                        <span id="waterTemp" class="font-semibold">0°C</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Humidity:</span>
+                        <span id="humidity" class="font-semibold">0%</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Pressure:</span>
+                        <span id="pressure" class="font-semibold">0 hPa</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">RPM (Left):</span>
+                        <span id="rpmLeft" class="font-semibold">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">RPM (Right):</span>
+                        <span id="rpmRight" class="font-semibold">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-600">Water Quality:</span>
+                        <span id="waterQuality" class="font-semibold">Good</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Control Panel -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h3 class="text-lg font-semibold text-gray-700 mb-4">Control Panel</h3>
+                <div class="grid grid-cols-2 gap-3">
+                    <button onclick="sendCommand('START_MISSION')" class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-all">
+                        Start Mission
+                    </button>
+                    <button onclick="sendCommand('STOP')" class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-all">
+                        Emergency Stop
+                    </button>
+                    <button onclick="sendCommand('DOCK')" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-all">
+                        Return to Dock
+                    </button>
+                    <button onclick="sendCommand('RESET')" class="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg font-medium transition-all">
+                        Reset System
+                    </button>
+                    <button onclick="sendCommand('PAUSE')" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-all col-span-2">
+                        Pause/Resume
+                    </button>
+                </div>
+                <div class="mt-4">
+                    <label class="text-sm text-gray-600">Manual Control:</label>
+                    <div class="grid grid-cols-3 gap-2 mt-2">
+                        <button onclick="sendManualControl('FORWARD')" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg">↑</button>
+                        <button onclick="sendManualControl('LEFT')" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg">←</button>
+                        <button onclick="sendManualControl('RIGHT')" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg">→</button>
+                        <button onclick="sendManualControl('BACKWARD')" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg col-start-2">↓</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Environmental Simulation Panel -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h3 class="text-lg font-semibold text-gray-700 mb-4">Lake Environment Simulation</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-blue-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-600">Wind Speed</p>
+                    <p id="windSpeed" class="text-xl font-bold text-blue-600">0 m/s</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2 mt-2">
+                        <div id="windBar" class="bg-blue-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-green-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-600">Water Current</p>
+                    <p id="waterCurrent" class="text-xl font-bold text-green-600">0 m/s</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2 mt-2">
+                        <div id="currentBar" class="bg-green-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-yellow-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-600">Wave Height</p>
+                    <p id="waveHeight" class="text-xl font-bold text-yellow-600">0 m</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2 mt-2">
+                        <div id="waveBar" class="bg-yellow-500 h-2 rounded-full transition-all" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="bg-red-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-600">Trash Density</p>
+                    <p id="trashDensity" class="text-xl font-bold text-red-600">Low</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2 mt-2">
+                        <div id="trashDensityBar" class="bg-red-500 h-2 rounded-full transition-all" style="width: 33%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-4">
+                <label class="text-sm text-gray-600">Simulation Speed:</label>
+                <input type="range" id="simSpeed" min="1" max="10" value="5" class="w-full mt-2" onchange="updateSimulationSpeed(this.value)">
+                <div class="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>Slow</span>
+                    <span>Normal</span>
+                    <span>Fast</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts & Warnings -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-700">Alerts & Warnings</h3>
+                <button onclick="clearAlerts()" class="text-sm text-blue-500 hover:text-blue-700">Clear All</button>
+            </div>
+            <div id="alertsContainer" class="space-y-2 max-h-48 overflow-y-auto">
+                <div class="bg-gray-50 p-4 rounded-lg">
+                    <p class="text-sm text-gray-500">No alerts at this time</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Logs -->
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-700">Activity Logs</h3>
+                <button onclick="clearLogs()" class="text-sm text-blue-500 hover:text-blue-700">Clear Logs</button>
+            </div>
+            <div id="logsContainer" class="space-y-2 max-h-64 overflow-y-auto">
+                <div class="flex items-start gap-3 text-sm border-b border-gray-100 pb-2">
+                    <span class="text-gray-500 font-mono text-xs">00:00:00</span>
+                    <span class="text-gray-700">System initialized. Waiting for connection...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        var client = null;
+        var connected = false;
+        var topicPrefix = 'robot/water';
+        var map = null;
+        var drawnItems = new L.FeatureGroup();
+        var robotMarker = null;
+        var pathLine = null;
+        var coveragePolygons = [];
+        var operationArea = null;
+        var pathPlan = null;
+        var currentCell = 0;
+        var totalCells = 0;
+        var missionStartTime = null;
+        var missionTimer = null;
+        var simulationSpeed = 5;
+        var coverageGrid = [];
+        var robotHeading = 0;
+        
+        // Drawing mode tracking variables
+        var isDrawingMode = false;
+        var isEditingMode = false;
+        var isFollowingRobot = false;
+
+        // Mission progress variables
+        var totalAreaCovered = 0;
+        var totalTrashCollected = 0;
+        var cellsCurrentlyCovered = 0;
+        var totalCellsToCover = 0;
+
+        // Initialize map
+        function initMap() {
+            map = L.map('map').setView([13.0827, 80.2707], 16);
+            
+            // OpenStreetMap Layer
+            var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                name: 'Street Map'
+            });
+            
+            // Satellite Layer
+            var satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+                name: 'Satellite'
+            });
+            
+            // Add default layer
+            satelliteLayer.addTo(map);
+            
+            // Add layer control
+            var baseLayers = {
+                "Satellite": satelliteLayer,
+                "Street Map": osmLayer
+            };
+            L.control.layers(baseLayers).addTo(map);
+
+            map.addLayer(drawnItems);
+            
+            // Add draw control
+            var drawControl = new L.Control.Draw({
+                draw: {
+                    polygon: {
+                        allowIntersection: false,
+                        drawError: {
+                            color: '#e1e4e8',
+                            message: 'Please draw a valid polygon'
+                        },
+                        shapeOptions: {
+                            color: '#3B82F6',
+                            fillColor: '#3B82F6',
+                            fillOpacity: 0.2
+                        }
+                    },
+                    rectangle: false,
+                    circle: false,
+                    marker: false,
+                    polyline: false,
+                    circlemarker: false
+                },
+                edit: {
+                    featureGroup: drawnItems,
+                    remove: true
+                }
+            });
+            map.addControl(drawControl);
+
+            // Draw event listeners
+            map.on(L.Draw.Event.CREATED, function (e) {
+                var type = e.layerType;
+                var layer = e.layer;
+                
+                if (type === 'polygon') {
+                    // Clear previous drawings
+                    drawnItems.clearLayers();
+                    drawnItems.addLayer(layer);
+                    operationArea = layer;
+                    
+                    // Calculate area
+                    var area = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
+                    var areaHectares = (area/10000).toFixed(2);
+                    var areaSqMeters = area.toFixed(0);
+                    
+                    // Update area display
+                    document.getElementById('areaSize').textContent = areaSqMeters + ' m²';
+                    
+                    // Estimate total cells and time
+                    totalCellsToCover = Math.ceil(area / 400); // ~400 sq m per cell
+                    totalCells = totalCellsToCover;
+                    var estimatedMinutes = Math.ceil(totalCells * 1.5); // 1.5 minutes per cell
+                    
+                    document.getElementById('cellsCovered').textContent = '0/' + totalCells;
+                    document.getElementById('estimatedTime').textContent = estimatedMinutes + ' min';
+                    
+                    addLog('Operation area set: ' + areaHectares + ' hectares (' + areaSqMeters + ' m²)');
+                    addLog('Estimated cells: ' + totalCells + ', Time: ' + estimatedMinutes + ' minutes');
+                    
+                    // Send area to ESP32
+                    if (connected) {
+                        sendAreaToESP32(layer.getLatLngs()[0]);
+                    }
+                }
+            });
+            
+            // Edit event listeners
+            map.on(L.Draw.Event.EDITED, function (e) {
+                var layers = e.layers;
+                layers.eachLayer(function (layer) {
+                    if (layer instanceof L.Polygon) {
+                        operationArea = layer;
+                        updateAreaCalculations(layer.getLatLngs()[0]);
+                    }
+                });
+            });
+            
+            // Delete event listeners
+            map.on(L.Draw.Event.DELETED, function (e) {
+                operationArea = null;
+                document.getElementById('areaSize').textContent = '0 m²';
+                document.getElementById('cellsCovered').textContent = '0/0';
+                document.getElementById('estimatedTime').textContent = '0 min';
+                addLog('Operation area cleared');
+            });
+            
+            // Track drawing state to prevent auto-centering
+            map.on('draw:drawstart', function(e) {
+                isDrawingMode = true;
+                document.getElementById('map').classList.add('drawing-active');
+                addLog('Drawing mode activated - map centering disabled');
+            });
+            
+            map.on('draw:drawstop', function(e) {
+                isDrawingMode = false;
+                document.getElementById('map').classList.remove('drawing-active');
+                addLog('Drawing completed - map centering enabled');
+            });
+            
+            map.on('draw:editstart', function(e) {
+                isEditingMode = true;
+                document.getElementById('map').classList.add('drawing-active');
+                addLog('Editing mode activated - map centering disabled');
+            });
+            
+            map.on('draw:editstop', function(e) {
+                isEditingMode = false;
+                document.getElementById('map').classList.remove('drawing-active');
+                addLog('Editing completed - map centering enabled');
+            });
+        }
+
+        // Update area calculations
+        function updateAreaCalculations(polygonCoords) {
+            var area = L.GeometryUtil.geodesicArea(polygonCoords);
+            var areaSqMeters = area.toFixed(0);
+            document.getElementById('areaSize').textContent = areaSqMeters + ' m²';
+            
+            totalCellsToCover = Math.ceil(area / 400);
+            totalCells = totalCellsToCover;
+            var estimatedMinutes = Math.ceil(totalCells * 1.5);
+            document.getElementById('estimatedTime').textContent = estimatedMinutes + ' min';
+        }
+
+        // Send operation area to ESP32
+        function sendAreaToESP32(polygonCoords) {
+            var coords = polygonCoords.map(function(latlng) {
+                return {lat: latlng.lat, lng: latlng.lng};
+            });
+            
+            var areaData = {
+                type: 'OPERATION_AREA',
+                coordinates: coords,
+                timestamp: new Date().toISOString(),
+                cellSize: 20, // meters
+                totalCells: totalCells
+            };
+            
+            if (connected && client) {
+                client.publish(topicPrefix + '/planning', JSON.stringify(areaData));
+                addLog('Operation area sent to robot for path planning');
+            }
+        }
+
+        // Update coverage progress display
+        function updateCoverageProgress() {
+            if (totalCellsToCover > 0) {
+                var coveragePercent = Math.min(100, (cellsCurrentlyCovered / totalCellsToCover) * 100);
+                document.getElementById('coveragePercent').textContent = coveragePercent.toFixed(1) + '%';
+                document.getElementById('cellsCovered').textContent = cellsCurrentlyCovered + '/' + totalCellsToCover;
+                
+                // Also update mission progress
+                updateProgress(totalAreaCovered, totalTrashCollected, cellsCurrentlyCovered, totalCellsToCover);
+            } else {
+                document.getElementById('coveragePercent').textContent = '0%';
+                document.getElementById('cellsCovered').textContent = '0/0';
+            }
+        }
+
+        // Add log entry
+        function addLog(message) {
+            var container = document.getElementById('logsContainer');
+            var timestamp = new Date().toLocaleTimeString();
+            var logEntry = document.createElement('div');
+            logEntry.className = 'flex items-start gap-3 text-sm border-b border-gray-100 pb-2';
+            logEntry.innerHTML = '<span class="text-gray-500 font-mono text-xs">' + timestamp + '</span><span class="text-gray-700">' + message + '</span>';
+            container.insertBefore(logEntry, container.firstChild);
+            
+            // Limit logs to 20 entries
+            while (container.children.length > 20) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        // Clear all logs
+        function clearLogs() {
+            var container = document.getElementById('logsContainer');
+            container.innerHTML = '<div class="flex items-start gap-3 text-sm border-b border-gray-100 pb-2">' +
+                '<span class="text-gray-500 font-mono text-xs">' + new Date().toLocaleTimeString() + '</span>' +
+                '<span class="text-gray-700">Logs cleared</span></div>';
+        }
+
+        // Clear all alerts
+        function clearAlerts() {
+            var container = document.getElementById('alertsContainer');
+            container.innerHTML = '<div class="bg-gray-50 p-4 rounded-lg">' +
+                '<p class="text-sm text-gray-500">No alerts at this time</p></div>';
+        }
+
+        // Add alert
+        function addAlert(message, type) {
+            var container = document.getElementById('alertsContainer');
+            var alertClass = '';
+            
+            switch(type) {
+                case 'warning':
+                    alertClass = 'bg-yellow-50 border-l-4 border-yellow-500';
+                    break;
+                case 'error':
+                    alertClass = 'bg-red-50 border-l-4 border-red-500';
+                    break;
+                case 'success':
+                    alertClass = 'bg-green-50 border-l-4 border-green-500';
+                    break;
+                default:
+                    alertClass = 'bg-blue-50 border-l-4 border-blue-500';
+            }
+            
+            var alertEntry = document.createElement('div');
+            alertEntry.className = alertClass + ' p-3 rounded mb-2';
+            alertEntry.innerHTML = '<p class="text-sm font-medium">' + message + '</p>';
+            container.insertBefore(alertEntry, container.firstChild);
+            
+            // Limit alerts to 5 entries
+            while (container.children.length > 5) {
+                container.removeChild(container.lastChild);
+            }
+            
+            addLog('ALERT: ' + message);
+        }
+
+        // Update battery display
+        function updateBattery(level, charging, voltage, current) {
+            document.getElementById('batteryLevel').textContent = level.toFixed(1) + '%';
+            document.getElementById('voltageValue').textContent = voltage.toFixed(2);
+            if (current) {
+                document.getElementById('chargeCurrent').textContent = current.toFixed(2);
+            }
+            
+            var bar = document.getElementById('batteryBar');
+            var icon = document.getElementById('batteryIcon');
+            
+            bar.style.width = level + '%';
+            
+            // Update color based on battery level
+            if (level > 60) {
+                bar.className = 'h-3 rounded-full transition-all bg-green-500';
+                icon.className = 'text-green-500';
+            } else if (level > 30) {
+                bar.className = 'h-3 rounded-full transition-all bg-yellow-500';
+                icon.className = 'text-yellow-500';
+            } else if (level > 15) {
+                bar.className = 'h-3 rounded-full transition-all bg-orange-500';
+                icon.className = 'text-orange-500';
+                if (level <= 20) addAlert('Low battery: ' + level.toFixed(0) + '%', 'warning');
+            } else {
+                bar.className = 'h-3 rounded-full transition-all bg-red-500';
+                icon.className = 'text-red-500';
+                if (level <= 15) addAlert('Critical battery: ' + level.toFixed(0) + '%', 'error');
+            }
+            
+            // Show/hide solar charging status
+            var solarStatus = document.getElementById('solarStatus');
+            if (charging) {
+                solarStatus.classList.remove('hidden');
+            } else {
+                solarStatus.classList.add('hidden');
+            }
+        }
+
+        // Update GPS display
+        function updateGPS(lat, lng, alt, heading) {
+            document.getElementById('latitude').textContent = lat.toFixed(6);
+            document.getElementById('longitude').textContent = lng.toFixed(6);
+            document.getElementById('altitude').textContent = alt.toFixed(1) + ' m';
+            if (heading) {
+                document.getElementById('heading').textContent = heading.toFixed(0) + '°';
+                robotHeading = heading;
+            }
+        }
+
+        // Update robot status
+        function updateStatus(status) {
+            var statusEl = document.getElementById('robotStatus');
+            var icon = document.getElementById('statusIcon');
+            
+            statusEl.textContent = status;
+            
+            var colors = {
+                'IDLE': 'text-gray-500',
+                'PLANNING': 'text-blue-400',
+                'SCANNING': 'text-blue-500',
+                'COVERING': 'text-green-500',
+                'COLLECTING': 'text-yellow-500',
+                'MOVING': 'text-purple-500',
+                'DOCKING': 'text-orange-500',
+                'CHARGING': 'text-indigo-500',
+                'ERROR': 'text-red-500'
+            };
+            
+            statusEl.className = 'text-2xl font-bold ' + (colors[status] || 'text-gray-500');
+            icon.className = (colors[status] || 'text-gray-500');
+            
+            // Update robot icon on map if exists
+            if (robotMarker) {
+                updateRobotIcon(status);
+            }
+        }
+
+        // Update robot icon based on status
+        function updateRobotIcon(status) {
+            var icons = {
+                'IDLE': '🛥️',
+                'PLANNING': '📐',
+                'SCANNING': '🔍',
+                'COVERING': '🧹',
+                'COLLECTING': '🗑️',
+                'MOVING': '🚤',
+                'DOCKING': '⚓',
+                'CHARGING': '🔋',
+                'ERROR': '⚠️'
+            };
+            
+            var iconHtml = icons[status] || '🛥️';
+            robotMarker.setIcon(L.divIcon({
+                className: 'robot-marker',
+                html: '<div class="robot-icon" style="transform: rotate(' + robotHeading + 'deg)">' + iconHtml + '</div>',
+                iconSize: [40, 40]
+            }));
+        }
+
+        // Update mission progress - FIXED VERSION
+        function updateProgress(area, trash, cells, total) {
+            // Update stored values
+            totalAreaCovered = area || totalAreaCovered;
+            totalTrashCollected = trash || totalTrashCollected;
+            cellsCurrentlyCovered = cells || cellsCurrentlyCovered;
+            totalCellsToCover = total || totalCellsToCover;
+            
+            // Update display elements
+            document.getElementById('areaCovered').textContent = totalAreaCovered.toFixed(1) + ' m²';
+            document.getElementById('trashCollected').textContent = totalTrashCollected.toFixed(1) + ' kg';
+            
+            // Update progress bars
+            document.getElementById('areaBar').style.width = Math.min(100, (totalAreaCovered / 5000) * 100) + '%';
+            document.getElementById('trashBar').style.width = Math.min(100, totalTrashCollected * 10) + '%'; // Assuming max 10kg trash
+            
+            // Update coverage
+            if (totalCellsToCover > 0) {
+                var coveragePercent = Math.min(100, (cellsCurrentlyCovered / totalCellsToCover) * 100);
+                document.getElementById('coveragePercent').textContent = coveragePercent.toFixed(1) + '%';
+                document.getElementById('cellsCovered').textContent = cellsCurrentlyCovered + '/' + totalCellsToCover;
+            }
+        }
+
+        // Update mission timer
+        function updateMissionTimer() {
+            if (!missionStartTime) return;
+            
+            var now = new Date();
+            var diff = Math.floor((now - missionStartTime) / 1000);
+            var hours = Math.floor(diff / 3600);
+            var minutes = Math.floor((diff % 3600) / 60);
+            var seconds = diff % 60;
+            
+            var timeString = 
+                (hours > 0 ? hours.toString().padStart(2, '0') + ':' : '') +
+                minutes.toString().padStart(2, '0') + ':' +
+                seconds.toString().padStart(2, '0');
+            
+            document.getElementById('missionTime').textContent = timeString;
+            
+            // Estimate energy used (simplified)
+            var energyUsed = (diff / 3600) * 200; // Assuming 200W average power
+            document.getElementById('energyUsed').textContent = energyUsed.toFixed(0);
+        }
+
+        // Update robot on map
+        function updateRobotOnMap(lat, lng, mode, speed, coverage) {
+            if (!map) return;
+            
+            // Create or update robot marker
+            if (!robotMarker) {
+                robotMarker = L.marker([lat, lng], {
+                    icon: L.divIcon({
+                        className: 'robot-marker',
+                        html: '<div class="robot-icon">🛥️</div>',
+                        iconSize: [40, 40]
+                    }),
+                    zIndexOffset: 1000
+                }).addTo(map);
+                
+                // Add path line
+                pathLine = L.polyline([], {
+                    color: '#3B82F6',
+                    weight: 2,
+                    opacity: 0.7
+                }).addTo(map);
+                
+                addLog('Robot marker added to map');
+            } else {
+                robotMarker.setLatLng([lat, lng]);
+                var currentPath = pathLine.getLatLngs();
+                currentPath.push([lat, lng]);
+                pathLine.setLatLngs(currentPath);
+                
+                // Only pan to robot if we're NOT in drawing/editing mode AND following is enabled
+                if (!isDrawingMode && !isEditingMode && isFollowingRobot) {
+                    var currentCenter = map.getCenter();
+                    var robotPos = robotMarker.getLatLng();
+                    
+                    // Only pan if robot is far from current viewport
+                    var pixelDistance = map.latLngToContainerPoint(currentCenter)
+                        .distanceTo(map.latLngToContainerPoint(robotPos));
+                    var maxDistance = Math.min(map.getSize().x, map.getSize().y) * 0.4;
+                    
+                    if (pixelDistance > maxDistance) {
+                        map.panTo([lat, lng], {animate: true, duration: 1.5});
+                    }
+                }
+            }
+            
+            // Update coverage visualization if in covering mode
+            if (mode === 'COVERING' && coverage) {
+                addCoverageCell(lat, lng, coverage.radius || 2);
+            }
+            
+            // Update robot icon
+            updateRobotIcon(mode);
+        }
+
+        // Add coverage cell to map - FIXED VERSION
+        function addCoverageCell(lat, lng, radius) {
+            // Check if this cell is already covered
+            var cellId = lat.toFixed(5) + '_' + lng.toFixed(5);
+            if (coverageGrid.includes(cellId)) return;
+            
+            coverageGrid.push(cellId);
+            
+            var coverageCircle = L.circle([lat, lng], {
+                color: '#10B981',
+                fillColor: '#10B981',
+                fillOpacity: 0.3,
+                radius: radius,
+                className: 'coverage-cell'
+            }).addTo(map);
+            
+            coveragePolygons.push(coverageCircle);
+            
+            // Update coverage progress
+            cellsCurrentlyCovered = coverageGrid.length;
+            
+            // Calculate area covered (assuming circular cells)
+            var cellArea = Math.PI * radius * radius;
+            totalAreaCovered += cellArea;
+            
+            // Simulate some trash collection
+            if (Math.random() > 0.7) { // 30% chance of finding trash
+                totalTrashCollected += (Math.random() * 0.5 + 0.1); // 0.1-0.6 kg per cell
+            }
+            
+            // Update the display
+            updateCoverageProgress();
+            
+            // Send coverage update via MQTT if connected
+            if (connected && client) {
+                var coverageData = {
+                    cellsCovered: cellsCurrentlyCovered,
+                    totalCells: totalCellsToCover,
+                    areaCovered: totalAreaCovered,
+                    trashCollected: totalTrashCollected,
+                    timestamp: new Date().toISOString()
+                };
+                client.publish(topicPrefix + '/progress', JSON.stringify(coverageData));
+            }
+        }
+
+        // Update environmental conditions
+        function updateEnvironment(wind, current, waves, density) {
+            document.getElementById('windSpeed').textContent = wind.toFixed(1) + ' m/s';
+            document.getElementById('waterCurrent').textContent = current.toFixed(1) + ' m/s';
+            document.getElementById('waveHeight').textContent = waves.toFixed(2) + ' m';
+            document.getElementById('trashDensity').textContent = density;
+            
+            // Update progress bars
+            document.getElementById('windBar').style.width = Math.min(100, (wind / 15) * 100) + '%';
+            document.getElementById('currentBar').style.width = Math.min(100, (current / 5) * 100) + '%';
+            document.getElementById('waveBar').style.width = Math.min(100, (waves / 2) * 100) + '%';
+            
+            // Update trash density bar
+            var densityValues = {'Low': 33, 'Medium': 66, 'High': 100};
+            document.getElementById('trashDensityBar').style.width = densityValues[density] + '%';
+        }
+
+        // Update simulation speed
+        function updateSimulationSpeed(speed) {
+            simulationSpeed = parseInt(speed);
+            addLog('Simulation speed set to ' + speed);
+        }
+
+        // Send command to robot
+        function sendCommand(cmd) {
+            if (!connected || !client) {
+                addAlert('Error: Not connected to MQTT broker', 'error');
+                return;
+            }
+            
+            var commandData = {command: cmd, timestamp: new Date().toISOString()};
+            
+            // Special handling for mission start
+            if (cmd === 'START_MISSION') {
+                if (!operationArea) {
+                    addAlert('Please draw an operation area first', 'warning');
+                    return;
+                }
+                
+                // Start mission timer
+                missionStartTime = new Date();
+                missionTimer = setInterval(updateMissionTimer, 1000);
+                
+                // Clear previous coverage
+                coverageGrid = [];
+                coveragePolygons.forEach(function(poly) {
+                    map.removeLayer(poly);
+                });
+                coveragePolygons = [];
+                
+                // Clear path
+                if (pathLine) {
+                    map.removeLayer(pathLine);
+                    pathLine = null;
+                }
+                
+                // Reset progress
+                totalAreaCovered = 0;
+                totalTrashCollected = 0;
+                cellsCurrentlyCovered = 0;
+                
+                // Include operation area in command
+                var coords = operationArea.getLatLngs()[0];
+                commandData.area = coords.map(function(latlng) {
+                    return {lat: latlng.lat, lng: latlng.lng};
+                });
+                
+                // Update progress display
+                updateProgress(0, 0, 0, totalCellsToCover);
+                
+                addLog('Mission started with ' + totalCells + ' cells to cover');
+                addAlert('Mission started successfully', 'success');
+            }
+            
+            if (cmd === 'STOP') {
+                // Stop mission timer
+                if (missionTimer) {
+                    clearInterval(missionTimer);
+                    missionTimer = null;
+                }
+                addAlert('Emergency stop activated', 'error');
+            }
+            
+            if (cmd === 'RESET') {
+                // Reset everything
+                if (missionTimer) {
+                    clearInterval(missionTimer);
+                    missionTimer = null;
+                }
+                missionStartTime = null;
+                coverageGrid = [];
+                coveragePolygons.forEach(function(poly) {
+                    map.removeLayer(poly);
+                });
+                coveragePolygons = [];
+                totalAreaCovered = 0;
+                totalTrashCollected = 0;
+                cellsCurrentlyCovered = 0;
+                document.getElementById('missionTime').textContent = '00:00';
+                document.getElementById('energyUsed').textContent = '0';
+                
+                // Update progress display
+                updateProgress(0, 0, 0, totalCellsToCover);
+                
+                addLog('System reset completed');
+            }
+            
+            client.publish(topicPrefix + '/commands', JSON.stringify(commandData));
+            addLog('Command sent: ' + cmd);
+        }
+
+        // Send manual control command
+        function sendManualControl(direction) {
+            if (!connected || !client) {
+                addAlert('Error: Not connected to MQTT broker', 'error');
+                return;
+            }
+            
+            var commandData = {
+                command: 'MANUAL_CONTROL',
+                direction: direction,
+                timestamp: new Date().toISOString()
+            };
+            
+            client.publish(topicPrefix + '/commands', JSON.stringify(commandData));
+            addLog('Manual control: ' + direction);
+        }
+
+        // Initialize everything when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            initMap();
+            
+            // Map control buttons
+            document.getElementById('drawAreaBtn').addEventListener('click', function() {
+                new L.Draw.Polygon(map, L.Draw.Polygon.prototype.options.draw).enable();
+                addLog('Drawing mode activated: Click to draw operation area');
+            });
+            
+            document.getElementById('clearMapBtn').addEventListener('click', function() {
+                drawnItems.clearLayers();
+                operationArea = null;
+                if (robotMarker) map.removeLayer(robotMarker);
+                if (pathLine) map.removeLayer(pathLine);
+                coveragePolygons.forEach(function(poly) {
+                    map.removeLayer(poly);
+                });
+                coveragePolygons = [];
+                coverageGrid = [];
+                
+                // Reset progress
+                totalAreaCovered = 0;
+                totalTrashCollected = 0;
+                cellsCurrentlyCovered = 0;
+                totalCellsToCover = 0;
+                
+                document.getElementById('areaSize').textContent = '0 m²';
+                document.getElementById('cellsCovered').textContent = '0/0';
+                document.getElementById('estimatedTime').textContent = '0 min';
+                document.getElementById('coveragePercent').textContent = '0%';
+                document.getElementById('areaCovered').textContent = '0 m²';
+                document.getElementById('trashCollected').textContent = '0 kg';
+                document.getElementById('areaBar').style.width = '0%';
+                document.getElementById('trashBar').style.width = '0%';
+                
+                addLog('Map cleared');
+            });
+            
+            document.getElementById('followRobotBtn').addEventListener('click', function() {
+                isFollowingRobot = !isFollowingRobot;
+                if (isFollowingRobot) {
+                    this.innerHTML = '📍 Stop Following';
+                    this.className = 'px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium text-sm transition-all';
+                    addLog('Map will follow robot movement');
+                } else {
+                    this.innerHTML = '📍 Follow Robot';
+                    this.className = 'px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg font-medium text-sm transition-all';
+                    addLog('Map will stay in fixed position');
+                }
+            });
+            
+            document.getElementById('startMissionBtn').addEventListener('click', function() {
+                sendCommand('START_MISSION');
+            });
+            
+            document.getElementById('stopMissionBtn').addEventListener('click', function() {
+                sendCommand('STOP');
+            });
+            
+            // MQTT Connection button
+            document.getElementById('connectBtn').addEventListener('click', function() {
+                if (connected) {
+                    // Disconnect
+                    if (client) {
+                        client.end();
+                        client = null;
+                    }
+                    connected = false;
+                    this.innerHTML = '<svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" class="mr-2"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>Connect to MQTT';
+                    this.className = 'flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all bg-blue-500 hover:bg-blue-600 text-white';
+                    document.getElementById('connectionStatus').textContent = 'Disconnected';
+                    document.getElementById('connectionStatus').className = 'font-semibold text-red-600';
+                    addLog('Disconnected from MQTT broker');
+                } else {
+                    // Connect
+                    var brokerUrl = document.getElementById('brokerUrl').value;
+                    topicPrefix = document.getElementById('topicPrefix').value;
+                    
+                    addLog('Connecting to ' + brokerUrl + '...');
+                    
+                    try {
+                        client = mqtt.connect(brokerUrl);
+                        
+                        client.on('connect', function() {
+                            connected = true;
+                            document.getElementById('connectBtn').innerHTML = '<svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" class="mr-2"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>Disconnect';
+                            document.getElementById('connectBtn').className = 'flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all bg-green-500 hover:bg-green-600 text-white';
+                            document.getElementById('connectionStatus').textContent = 'Connected';
+                            document.getElementById('connectionStatus').className = 'font-semibold text-green-600';
+                            
+                            addLog('Connected successfully to MQTT broker!');
+                            
+                            // Subscribe to topics
+                            client.subscribe(topicPrefix + '/battery');
+                            client.subscribe(topicPrefix + '/gps');
+                            client.subscribe(topicPrefix + '/status');
+                            client.subscribe(topicPrefix + '/sensors');
+                            client.subscribe(topicPrefix + '/progress');
+                            client.subscribe(topicPrefix + '/environment');
+                            client.subscribe(topicPrefix + '/alerts');
+                            client.subscribe(topicPrefix + '/coverage');
+                            
+                            addLog('Subscribed to all robot topics');
+                        });
+                        
+                        client.on('message', function(topic, message) {
+                            try {
+                                var data = JSON.parse(message.toString());
+                                var topicName = topic.split('/').pop();
+                                
+                                switch(topicName) {
+                                    case 'battery':
+                                        updateBattery(
+                                            data.level || 0,
+                                            data.charging || false,
+                                            data.voltage || 0,
+                                            data.current || 0
+                                        );
+                                        document.getElementById('tempValue').textContent = (data.temperature || 0).toFixed(1);
+                                        break;
+                                        
+                                    case 'gps':
+                                        updateGPS(
+                                            data.lat || 0,
+                                            data.lng || 0,
+                                            data.alt || 0,
+                                            data.heading || 0
+                                        );
+                                        updateRobotOnMap(
+                                            data.lat || 0,
+                                            data.lng || 0,
+                                            data.mode || 'IDLE',
+                                            data.speed || 0,
+                                            data.coverage || null
+                                        );
+                                        break;
+                                        
+                                    case 'status':
+                                        updateStatus(data.mode || 'IDLE');
+                                        document.getElementById('lidarValue').textContent = (data.lidar || 0).toFixed(1);
+                                        document.getElementById('speedValue').textContent = (data.speed || 0).toFixed(1);
+                                        document.getElementById('motorTemp').textContent = (data.motorTemp || 0).toFixed(1);
+                                        
+                                        // Update coverage from status if available
+                                        if (data.coverage) {
+                                            cellsCurrentlyCovered = data.coverage.cellsCovered || cellsCurrentlyCovered;
+                                            totalCellsToCover = data.coverage.totalCells || totalCellsToCover;
+                                            totalAreaCovered = data.coverage.areaCovered || totalAreaCovered;
+                                            updateCoverageProgress();
+                                        }
+                                        break;
+                                        
+                                    case 'sensors':
+                                        document.getElementById('waterTemp').textContent = (data.waterTemp || 0).toFixed(1) + '°C';
+                                        document.getElementById('humidity').textContent = (data.humidity || 0).toFixed(1) + '%';
+                                        document.getElementById('pressure').textContent = (data.pressure || 0).toFixed(1) + ' hPa';
+                                        document.getElementById('rpmLeft').textContent = (data.rpmLeft || 0).toFixed(0);
+                                        document.getElementById('rpmRight').textContent = (data.rpmRight || 0).toFixed(0);
+                                        document.getElementById('waterQuality').textContent = data.waterQuality || 'Good';
+                                        
+                                        // Check for poor water quality
+                                        if (data.waterQuality && data.waterQuality.toLowerCase().includes('poor')) {
+                                            addAlert('Poor water quality detected!', 'warning');
+                                        }
+                                        break;
+                                        
+                                    case 'progress':
+                                        updateProgress(
+                                            data.areaCovered || 0,
+                                            data.trashCollected || 0,
+                                            data.cellsCovered || 0,
+                                            data.totalCells || 0
+                                        );
+                                        break;
+                                        
+                                    case 'environment':
+                                        updateEnvironment(
+                                            data.windSpeed || 0,
+                                            data.waterCurrent || 0,
+                                            data.waveHeight || 0,
+                                            data.trashDensity || 'Low'
+                                        );
+                                        break;
+                                        
+                                    case 'alerts':
+                                        if (data.message) {
+                                            var alertType = data.type || 'info';
+                                            addAlert(data.message, alertType);
+                                        }
+                                        break;
+                                        
+                                    case 'coverage':
+                                        // Handle coverage updates
+                                        if (data.cells) {
+                                            // Update coverage grid
+                                            coverageGrid = data.cells || [];
+                                            cellsCurrentlyCovered = coverageGrid.length;
+                                            updateCoverageProgress();
+                                        }
+                                        break;
+                                }
+                            } catch (e) {
+                                console.error('Error parsing message:', e);
+                                addLog('Error parsing MQTT message: ' + e.message);
+                            }
+                        });
+                        
+                        client.on('error', function(error) {
+                            addAlert('MQTT Connection error: ' + error, 'error');
+                            console.error('MQTT Error:', error);
+                        });
+                        
+                        client.on('close', function() {
+                            if (connected) {
+                                connected = false;
+                                document.getElementById('connectBtn').innerHTML = '<svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" class="mr-2"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>Connect to MQTT';
+                                document.getElementById('connectBtn').className = 'flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all bg-blue-500 hover:bg-blue-600 text-white';
+                                document.getElementById('connectionStatus').textContent = 'Disconnected';
+                                document.getElementById('connectionStatus').className = 'font-semibold text-red-600';
+                                addLog('Disconnected from MQTT broker');
+                            }
+                        });
+                        
+                    } catch (e) {
+                        addAlert('Failed to connect: ' + e.message, 'error');
+                    }
+                }
+            });
+            
+            // Add initial log
+            addLog('Water Robot Monitoring System initialized');
+            addLog('Draw an operation area on the map to begin mission planning');
+        });
+    </script>
+</body>
+</html>
